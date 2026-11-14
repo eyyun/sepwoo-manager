@@ -103,18 +103,45 @@ object LocalApkPatcher {
         )
     }
 
-    fun downloadFile(url: String, destFile: File, label: String, onProgress: (String) -> Unit) {
-        onProgress("$label indiriliyor...")
+    fun downloadFile(
+        url: String,
+        destFile: File,
+        label: String,
+        onProgress: (String, Float?) -> Unit
+    ) {
+        onProgress("$label bağlanılıyor...", null)
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 15_000
             readTimeout = 60_000
         }
+        val total = conn.contentLengthLong
+        var downloaded = 0L
+        var lastReport = 0L
         conn.inputStream.use { input ->
             FileOutputStream(destFile).use { output ->
-                input.copyTo(output)
+                val buf = ByteArray(16 * 1024)
+                var read = input.read(buf)
+                while (read >= 0) {
+                    output.write(buf, 0, read)
+                    downloaded += read
+                    val now = System.currentTimeMillis()
+                    if (now - lastReport > 250) {
+                        lastReport = now
+                        val mbDone = "%.1f".format(downloaded / (1024.0 * 1024.0))
+                        if (total > 0) {
+                            val pct = (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                            val mbTot = "%.1f".format(total / (1024.0 * 1024.0))
+                            onProgress("$label indiriliyor ($mbDone / $mbTot MB)", pct)
+                        } else {
+                            onProgress("$label indiriliyor ($mbDone MB)", null)
+                        }
+                    }
+                    read = input.read(buf)
+                }
             }
         }
+        onProgress("$label indirildi ✓", 1f)
     }
 
     fun sha256Hex(file: File): String {
@@ -190,22 +217,30 @@ object LocalApkPatcher {
                             config.customIconPngBytes
                         } else null
 
-                        when {
-                            replacement != null -> {
-                                zos.putNextEntry(outEntry)
-                                zos.write(replacement)
-                                zos.closeEntry()
+                        val payload = replacement ?: customIcon
+                        if (payload != null) {
+                            if (name == "resources.arsc") {
+                                outEntry.method = ZipEntry.STORED
+                                outEntry.size = payload.size.toLong()
+                                outEntry.compressedSize = payload.size.toLong()
+                                outEntry.crc = java.util.zip.CRC32().apply { update(payload) }.value
                             }
-                            customIcon != null -> {
-                                zos.putNextEntry(outEntry)
-                                zos.write(customIcon)
-                                zos.closeEntry()
-                            }
-                            else -> {
-                                zos.putNextEntry(outEntry)
-                                zis.copyTo(zos)
-                                zos.closeEntry()
-                            }
+                            zos.putNextEntry(outEntry)
+                            zos.write(payload)
+                            zos.closeEntry()
+                        } else if (name == "resources.arsc") {
+                            val rawBytes = zis.readBytes()
+                            outEntry.method = ZipEntry.STORED
+                            outEntry.size = rawBytes.size.toLong()
+                            outEntry.compressedSize = rawBytes.size.toLong()
+                            outEntry.crc = java.util.zip.CRC32().apply { update(rawBytes) }.value
+                            zos.putNextEntry(outEntry)
+                            zos.write(rawBytes)
+                            zos.closeEntry()
+                        } else {
+                            zos.putNextEntry(outEntry)
+                            zis.copyTo(zos)
+                            zos.closeEntry()
                         }
                     }
                     entry = zis.nextEntry
@@ -224,6 +259,7 @@ object LocalApkPatcher {
         ApkSigner.Builder(listOf(signerConfig))
             .setInputApk(unsignedApk)
             .setOutputApk(outSignedApk)
+            .setMinSdkVersion(26)
             .setV1SigningEnabled(true)
             .setV2SigningEnabled(true)
             .setV3SigningEnabled(true)
@@ -241,4 +277,39 @@ object LocalApkPatcher {
         }
         context.startActivity(intent)
     }
+
+    fun reportError(
+        context: Context,
+        stage: String,
+        error: Throwable,
+        logs: List<String>
+    ): Boolean = runCatching {
+        val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val payload = JSONObject().apply {
+            put("managerVersion", pkgInfo.versionName ?: "1.0.1")
+            put("stage", stage)
+            put("errorClass", error.javaClass.name)
+            put("errorMessage", error.localizedMessage ?: error.message ?: "")
+            put("stackTrace", android.util.Log.getStackTraceString(error).take(8000))
+            put("device", JSONObject().apply {
+                put("manufacturer", android.os.Build.MANUFACTURER)
+                put("model", android.os.Build.MODEL)
+                put("brand", android.os.Build.BRAND)
+                put("device", android.os.Build.DEVICE)
+                put("androidVersion", android.os.Build.VERSION.RELEASE)
+                put("sdkInt", android.os.Build.VERSION.SDK_INT)
+                put("abis", org.json.JSONArray(android.os.Build.SUPPORTED_ABIS.toList()))
+            })
+            put("recentLogs", org.json.JSONArray(logs.takeLast(15)))
+        }
+        val conn = (URL("https://cronus.best/sepwoo/api/report").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            connectTimeout = 8_000
+            readTimeout = 8_000
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        conn.responseCode in 200..299
+    }.getOrDefault(false)
 }
