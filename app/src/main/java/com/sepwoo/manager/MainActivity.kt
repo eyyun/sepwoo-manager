@@ -400,9 +400,10 @@ fun SepwooManagerApp() {
                             FilledTonalButton(
                                 onClick = { refreshAll() },
                                 shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier.weight(1f)
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                modifier = Modifier.weight(1f).height(46.dp)
                             ) {
-                                Text("Güncelleme Tara")
+                                Text("Güncelle Tara", maxLines = 1, softWrap = false, fontSize = 13.sp)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -413,9 +414,10 @@ fun SepwooManagerApp() {
                                 },
                                 border = BorderStroke(1.dp, OutlineSubtle),
                                 shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier.weight(1f)
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                modifier = Modifier.weight(1f).height(46.dp)
                             ) {
-                                Text("GitHub")
+                                Text("GitHub", maxLines = 1, softWrap = false, fontSize = 13.sp)
                             }
                         }
                     }
