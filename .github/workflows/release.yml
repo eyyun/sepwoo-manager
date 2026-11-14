@@ -29,14 +29,17 @@ jobs:
 
       - name: Sign Release APK
         run: |
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
-          "$APKSIGNER" sign \
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          "$BUILD_TOOLS/zipalign" -p -f 4 \
+            app/build/outputs/apk/release/app-release-unsigned.apk \
+            app-release-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign \
             --ks app/src/main/assets/sepwoo_signer.p12 \
             --ks-type PKCS12 \
             --ks-pass pass:sepwoo123 \
             --key-pass pass:sepwoo123 \
             --out Sepwoo-Manager.apk \
-            app/build/outputs/apk/release/app-release-unsigned.apk
+            app-release-aligned.apk
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
