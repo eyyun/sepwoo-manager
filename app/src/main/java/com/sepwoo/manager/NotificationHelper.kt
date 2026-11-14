@@ -97,6 +97,18 @@ object NotificationHelper {
     fun getLastAppliedPatchKey(context: Context): String? =
         prefs(context).getString(KEY_APPLIED_PATCH, null)
 
+    fun isNewPatchAvailable(
+        context: Context,
+        patchVersion: String,
+        sha256: String,
+        isInstalled: Boolean
+    ): Boolean {
+        if (patchVersion.isBlank() && sha256.isBlank()) return false
+        val applied = prefs(context).getString(KEY_APPLIED_PATCH, null)
+            ?: return isInstalled
+        return applied != "$patchVersion|$sha256"
+    }
+
     fun setLastNotifiedPatchKey(context: Context, key: String) {
         prefs(context).edit().putString(KEY_LAST_PATCH, key).apply()
     }

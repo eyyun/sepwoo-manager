@@ -293,10 +293,10 @@ fun SepwooManagerApp() {
                     }
 
                     currentStep = 4
-                    val pickedUri = customIconUri
-                    val iconBytes = if (pickedUri != null) {
+                    val pickedIconUri = customIconUri
+                    val iconBytes = if (pickedIconUri != null) {
                         pushLog("Özel ikon 192x192 yuvarlatılıyor...")
-                        LocalApkPatcher.renderRoundedIconPng(context, pickedUri)
+                        LocalApkPatcher.renderRoundedIconPng(context, pickedIconUri)
                     } else {
                         pushLog("Varsayılan Sinewix PLUS ikonu hazırlanıyor...")
                         LocalApkPatcher.renderDefaultIconPng(context)
@@ -636,6 +636,46 @@ fun SepwooManagerApp() {
                         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)
                     ) {
                         Text(if (selectedApkUri == null) "APK Seç" else "Seçildi ✓")
+                    }
+                }
+
+                // New Patch Bundle Available Pill Card
+                val curManifest = manifest
+                val hasNewPatch = curManifest != null && NotificationHelper.isNewPatchAvailable(
+                    context = context,
+                    patchVersion = curManifest.patchVersion,
+                    sha256 = curManifest.patchBundleSha256,
+                    isInstalled = installedSinewixVersion != null
+                )
+                if (hasNewPatch && curManifest != null) {
+                    Spacer(Modifier.height(16.dp))
+                    Surface(
+                        color = Color(0xFF1D3B2A),
+                        contentColor = Color.White,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, Color(0xFF34D399).copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = !isWorking) { startPatchAndInstall() }
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Yeni Yama Mevcut (${curManifest.patchVersion})",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    "Manager'ı güncellemeden tek dokunuşla kur (${curManifest.patchBundleSha256.take(8)})",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFA7F3D0)
+                                )
+                            }
+                            Text("Yükle", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
                     }
                 }
 
