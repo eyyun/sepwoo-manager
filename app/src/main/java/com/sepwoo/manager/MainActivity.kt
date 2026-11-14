@@ -1,5 +1,6 @@
 package com.sepwoo.manager
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -102,6 +103,8 @@ fun SepwooManagerApp() {
     var customAppName by remember { mutableStateOf("Sinewix PLUS") }
     var statusText by remember { mutableStateOf("cronus.best kontrol ediliyor...") }
     var slimAbis by remember { mutableStateOf(true) }
+    var notificationsEnabled by remember { mutableStateOf(NotificationHelper.isNotificationsEnabled(context)) }
+    var notifPermissionGranted by remember { mutableStateOf(NotificationHelper.hasNotificationPermission(context)) }
 
     var showProcessDialog by remember { mutableStateOf(false) }
     var processTitle by remember { mutableStateOf("Yama İşlemi") }
@@ -269,6 +272,7 @@ fun SepwooManagerApp() {
 
                     currentStep = 5
                     stepProgress = 1f
+                    NotificationHelper.markPatchApplied(context, info.patchVersion, info.patchBundleSha256)
                     pushLog("Tamamlandı! Android yükleyicisi açılıyor...")
                     withContext(Dispatchers.Main) {
                         if (LocalApkPatcher.hasNonSepwooSignature(context, info.targetPackage)) {
@@ -295,7 +299,27 @@ fun SepwooManagerApp() {
         }
     }
 
-    LaunchedEffect(Unit) { refreshAll() }
+    val notifPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notifPermissionGranted = granted
+        if (granted && notificationsEnabled) {
+            NotificationHelper.schedulePeriodicChecks(context)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        NotificationHelper.ensureChannels(context)
+        if (notificationsEnabled) {
+            NotificationHelper.schedulePeriodicChecks(context)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !NotificationHelper.hasNotificationPermission(context) &&
+            !NotificationHelper.hasAskedPermission(context)
+        ) {
+            NotificationHelper.markAskedPermission(context)
+            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        refreshAll()
+    }
 
     val apkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -397,6 +421,64 @@ fun SepwooManagerApp() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(if (customIconUri == null) "Özel Uygulama İkonu Seç" else "Özel İkon Seçildi ✓")
+                        }
+                    }
+                }
+
+                Surface(
+                    color = SurfaceL1,
+                    shape = RoundedCornerShape(22.dp),
+                    border = BorderStroke(1.dp, OutlineSubtle),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Bildirimler", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = AccentCrimson)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Yeni Yama Bildirimleri", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                Text(
+                                    if (!notifPermissionGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                                        "Bildirim izni henüz verilmedi"
+                                    else
+                                        "6 saatte bir yeni yama ve Manager güncellemesi kontrol edilir",
+                                    fontSize = 12.sp,
+                                    color = MutedText
+                                )
+                            }
+                            Switch(
+                                checked = notificationsEnabled,
+                                onCheckedChange = { enabled ->
+                                    notificationsEnabled = enabled
+                                    NotificationHelper.setNotificationsEnabled(context, enabled)
+                                    if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !NotificationHelper.hasNotificationPermission(context)) {
+                                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                },
+                                enabled = !isWorking
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !NotificationHelper.hasNotificationPermission(context)) {
+                                    notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    NotificationHelper.showTestNotification(context)
+                                    statusText = "Test bildirimi gönderildi ✓"
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                if (!notifPermissionGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                                    "Bildirim İzni Ver"
+                                else
+                                    "Test Bildirimi Gönder"
+                            )
                         }
                     }
                 }
