@@ -127,7 +127,7 @@ object LocalApkPatcher {
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "SepwooManager/$currentVer")
         }
-        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         val json = JSONObject(body)
         val tag = json.optString("tag_name", "").removePrefix("v")
         if (tag.isBlank() || tag == currentVer) return@runCatching null
@@ -153,7 +153,7 @@ object LocalApkPatcher {
             connectTimeout = 15_000
             readTimeout = 15_000
         }
-        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val body = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         val json = JSONObject(body)
         val notes = buildList {
             val arr = json.optJSONArray("changelog")

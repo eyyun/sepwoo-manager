@@ -440,9 +440,9 @@ fun SepwooManagerApp() {
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Image(
-                            painter = painterResource(id = R.mipmap.ic_launcher),
-                            contentDescription = "Sepwoo",
-                            modifier = Modifier.size(56.dp).clip(CircleShape)
+                            painter = painterResource(id = R.drawable.sinewix_plus_logo),
+                            contentDescription = "Sinewix PLUS",
+                            modifier = Modifier.size(64.dp).clip(CircleShape)
                         )
                     }
                 }
