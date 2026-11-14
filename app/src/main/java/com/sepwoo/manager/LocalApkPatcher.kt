@@ -39,6 +39,13 @@ import java.util.zip.ZipOutputStream
 object LocalApkPatcher {
 
     const val DEFAULT_MANIFEST_URL = "https://cronus.best/sepwoo/manifest.json"
+    const val GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/eyyun/sepwoo-manager/releases/latest"
+
+    data class ManagerUpdateInfo(
+        val latestTag: String,
+        val apkUrl: String,
+        val releaseNotes: String
+    )
 
     data class ManifestInfo(
         val appName: String,
@@ -74,6 +81,35 @@ object LocalApkPatcher {
         "com/ibm/icu/impl/data/icudata/translit/",
         "com/ibm/icu/impl/data/icudata/rbnf/"
     )
+
+    fun checkManagerUpdate(context: Context): ManagerUpdateInfo? = runCatching {
+        val currentVer = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+        val conn = (URL(GITHUB_LATEST_RELEASE_API).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("User-Agent", "SepwooManager/$currentVer")
+        }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val json = JSONObject(body)
+        val tag = json.optString("tag_name", "").removePrefix("v")
+        if (tag.isBlank() || tag == currentVer) return@runCatching null
+        val assets = json.optJSONArray("assets") ?: return@runCatching null
+        var apkUrl = ""
+        for (i in 0 until assets.length()) {
+            val a = assets.getJSONObject(i)
+            if (a.optString("name").endsWith(".apk", ignoreCase = true)) {
+                apkUrl = a.optString("browser_download_url")
+                break
+            }
+        }
+        if (apkUrl.isBlank()) return@runCatching null
+        ManagerUpdateInfo(
+            latestTag = "v$tag",
+            apkUrl = apkUrl,
+            releaseNotes = json.optString("body", "")
+        )
+    }.getOrNull()
 
     fun fetchManifest(url: String = DEFAULT_MANIFEST_URL): ManifestInfo {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
