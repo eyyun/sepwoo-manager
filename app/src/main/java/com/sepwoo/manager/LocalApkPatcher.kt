@@ -191,30 +191,38 @@ object LocalApkPatcher {
         val total = conn.contentLengthLong
         var downloaded = 0L
         var lastReport = 0L
+        val partFile = File(destFile.parentFile, "${destFile.name}.part")
         conn.inputStream.use { input ->
-            FileOutputStream(destFile).use { output ->
+            FileOutputStream(partFile).use { output ->
                 val buf = ByteArray(16 * 1024)
                 var read = input.read(buf)
                 while (read >= 0) {
                     output.write(buf, 0, read)
                     downloaded += read
                     val now = System.currentTimeMillis()
-                    if (now - lastReport > 250) {
+                    if (now - lastReport > 350) {
                         lastReport = now
                         val mbDone = "%.1f".format(downloaded / (1024.0 * 1024.0))
                         if (total > 0) {
                             val pct = (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
                             val mbTot = "%.1f".format(total / (1024.0 * 1024.0))
-                            onProgress("$label indiriliyor ($mbDone / $mbTot MB)", pct)
+                            val pctInt = (pct * 100).toInt()
+                            onProgress("$label indiriliyor: $mbDone / $mbTot MB (%$pctInt)", pct)
                         } else {
-                            onProgress("$label indiriliyor ($mbDone MB)", null)
+                            onProgress("$label indiriliyor: $mbDone MB", null)
                         }
                     }
                     read = input.read(buf)
                 }
             }
         }
-        onProgress("$label indirildi ✓", 1f)
+        if (destFile.exists()) destFile.delete()
+        if (!partFile.renameTo(destFile)) {
+            partFile.copyTo(destFile, overwrite = true)
+            partFile.delete()
+        }
+        val finalMb = "%.1f".format(destFile.length() / (1024.0 * 1024.0))
+        onProgress("$label indirildi ($finalMb MB) ✓", 1f)
     }
 
     fun sha256Hex(file: File): String {
@@ -260,7 +268,7 @@ object LocalApkPatcher {
     ) {
         val unsignedApk = File(context.cacheDir, "sinewix_plus_unsigned.apk")
 
-        onProgress("Yama paketi hazırlanıyor...")
+        onProgress("Yama paketi açılıyor...")
         val replacements = mutableMapOf<String, ByteArray>()
         ZipInputStream(BufferedInputStream(FileInputStream(patchBundleZip))).use { zis ->
             var entry = zis.nextEntry
@@ -271,8 +279,20 @@ object LocalApkPatcher {
                 entry = zis.nextEntry
             }
         }
+        onProgress("Yama paketi hazır: ${replacements.size} dosya (${replacements.keys.joinToString()})")
 
-        onProgress("Sinewix PLUS yerel olarak derleniyor...")
+        val primaryAbi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+        if (config.slimUnusedAbis) {
+            onProgress("Boyut optimizasyonu: $primaryAbi dışındaki ABI ve reklamlar temizleniyor...")
+        }
+        if (config.customIconPngBytes != null) {
+            onProgress("Özel uygulama ikonu APK varlıklarına işleniyor...")
+        }
+
+        onProgress("Resmi APK yamalanıyor ve .so kütüphaneleri 4096-byte hizalanıyor...")
+        var writtenCount = 0
+        var skippedCount = 0
+        var alignedSoCount = 0
         val cos = CountingOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk)))
         ZipOutputStream(cos).use { zos ->
             zos.setLevel(Deflater.BEST_COMPRESSION)
@@ -303,6 +323,7 @@ object LocalApkPatcher {
                         if (storedAlignment > 0) {
                             val rawBytes = payload ?: zis.readBytes()
                             writeStoredAligned(zos, cos, name, rawBytes, storedAlignment)
+                            if (storedAlignment == 4096) alignedSoCount++
                         } else if (payload != null) {
                             zos.putNextEntry(ZipEntry(name))
                             zos.write(payload)
@@ -312,23 +333,29 @@ object LocalApkPatcher {
                             zis.copyTo(zos)
                             zos.closeEntry()
                         }
+                        writtenCount++
+                    } else {
+                        skippedCount++
                     }
                     entry = zis.nextEntry
                 }
             }
         }
+        val unsignedMb = "%.1f".format(unsignedApk.length() / (1024.0 * 1024.0))
+        onProgress("APK birleştirildi ($writtenCount dosya, $alignedSoCount .so hizalandı, $skippedCount temizlendi • $unsignedMb MB)")
 
-        onProgress("APK yerel olarak imzalanıyor...")
+        onProgress("Sepwoo anahtarıyla APK imzalanıyor (v1 + v2 + v3)...")
         val ks = KeyStore.getInstance("PKCS12")
         context.assets.open("sepwoo_signer.p12").use { ks.load(it, "sepwoo123".toCharArray()) }
         val alias = ks.aliases().nextElement()
         val key = ks.getKey(alias, "sepwoo123".toCharArray()) as PrivateKey
         val cert = ks.getCertificate(alias) as X509Certificate
 
+        val outPart = File(outSignedApk.parentFile, "${outSignedApk.name}.part")
         val signerConfig = ApkSigner.SignerConfig.Builder("sepwoo", key, listOf(cert)).build()
         ApkSigner.Builder(listOf(signerConfig))
             .setInputApk(unsignedApk)
-            .setOutputApk(outSignedApk)
+            .setOutputApk(outPart)
             .setMinSdkVersion(26)
             .setV1SigningEnabled(true)
             .setV2SigningEnabled(true)
@@ -336,7 +363,14 @@ object LocalApkPatcher {
             .build()
             .sign()
 
+        if (outSignedApk.exists()) outSignedApk.delete()
+        if (!outPart.renameTo(outSignedApk)) {
+            outPart.copyTo(outSignedApk, overwrite = true)
+            outPart.delete()
+        }
         unsignedApk.delete()
+        val finalMb = "%.1f".format(outSignedApk.length() / (1024.0 * 1024.0))
+        onProgress("İmzalama tamamlandı: $finalMb MB ✓")
     }
 
     fun hasNonSepwooSignature(context: Context, packageName: String): Boolean = runCatching {

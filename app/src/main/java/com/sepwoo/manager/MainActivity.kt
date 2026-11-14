@@ -119,7 +119,7 @@ fun SepwooManagerApp() {
     fun pushLog(line: String) {
         if (processLogs.lastOrNull() != line) {
             processLogs.add(line)
-            if (processLogs.size > 30) processLogs.removeAt(0)
+            if (processLogs.size > 60) processLogs.removeAt(0)
         }
     }
 
@@ -209,9 +209,35 @@ fun SepwooManagerApp() {
             runCatching {
                 withContext(Dispatchers.IO) {
                     val info = manifest ?: LocalApkPatcher.fetchManifest().also { manifest = it }
-                    val officialApk = File(context.cacheDir, "official_sinewix.apk")
-                    val bundleZip = File(context.cacheDir, "sepwoo_bundle.zip")
-                    val signedApk = File(context.filesDir, "Sinewix_PLUS_signed.apk")
+
+                    if (LocalApkPatcher.hasNonSepwooSignature(context, info.targetPackage)) {
+                        withContext(Dispatchers.Main) {
+                            pendingConflictApk = null
+                            conflictHint = ""
+                            showProcessDialog = false
+                            showConflictDialog = true
+                            statusText = "Farklı imzalı SineWix tespit edildi, önce kaldırılması gerekiyor..."
+                        }
+                        return@withContext
+                    }
+
+                    val patchKey = info.patchBundleSha256.take(12).ifBlank { info.patchVersion }
+                    val officialApk = File(context.cacheDir, "official_${info.targetVersionName}.apk")
+                    val bundleZip = File(context.cacheDir, "bundle_$patchKey.zip")
+                    val signedApk = File(context.filesDir, "Sinewix_PLUS_${patchKey}_${slimAbis}_${customAppName.hashCode()}.apk")
+
+                    if (signedApk.exists() && signedApk.length() > 10_000_000L && selectedApkUri == null && customIconUri == null) {
+                        currentStep = 5
+                        stepProgress = 1f
+                        pushLog("Önbellekte hazır imzalı APK bulundu (${"%.1f".format(signedApk.length() / 1048576.0)} MB) ✓")
+                        pushLog("Tekrar indirme ve derleme atlandı, yükleyici açılıyor...")
+                        NotificationHelper.markPatchApplied(context, info.patchVersion, info.patchBundleSha256)
+                        withContext(Dispatchers.Main) {
+                            statusText = "Hazır! Android yükleyicisi açılıyor..."
+                            LocalApkPatcher.installApk(context, signedApk)
+                        }
+                        return@withContext
+                    }
 
                     currentStep = 1
                     val pickedUri = selectedApkUri
@@ -221,21 +247,38 @@ fun SepwooManagerApp() {
                         context.contentResolver.openInputStream(pickedUri)?.use { input ->
                             officialApk.outputStream().use { output -> input.copyTo(output) }
                         } ?: error("Seçilen APK açılamadı")
-                        pushLog("Resmi APK hazır ✓")
+                        pushLog("Yerel resmi APK hazır (${"%.1f".format(officialApk.length() / 1048576.0)} MB) ✓")
+                    } else if (officialApk.exists() && officialApk.length() > 50_000_000L) {
+                        stepProgress = 1f
+                        statusText = "Önbellekten resmi APK kullanılıyor..."
+                        pushLog("Önbellekteki resmi APK kullanılıyor (${"%.1f".format(officialApk.length() / 1048576.0)} MB) ✓")
                     } else {
+                        var lastLoggedPct = -10
                         LocalApkPatcher.downloadFile(info.officialApkUrl, officialApk, "Resmi SineWix APK") { msg, pct ->
                             statusText = msg
                             stepProgress = pct
-                            if (pct == null || pct >= 1f) pushLog(msg)
+                            val pctInt = ((pct ?: 0f) * 100).toInt()
+                            if (pct == null || pct >= 1f || pctInt >= lastLoggedPct + 15) {
+                                if (pct != null) lastLoggedPct = pctInt
+                                pushLog(msg)
+                            }
                         }
                     }
 
                     currentStep = 2
                     stepProgress = null
-                    LocalApkPatcher.downloadFile(info.patchBundleUrl, bundleZip, "cronus.best yama paketi") { msg, pct ->
-                        statusText = msg
-                        stepProgress = pct
-                        if (pct == null || pct >= 1f) pushLog(msg)
+                    val cachedBundleOk = bundleZip.exists() && info.patchBundleSha256.isNotBlank() &&
+                        LocalApkPatcher.sha256Hex(bundleZip).equals(info.patchBundleSha256, ignoreCase = true)
+                    if (cachedBundleOk) {
+                        stepProgress = 1f
+                        statusText = "Önbellekten yama paketi kullanılıyor..."
+                        pushLog("Önbellekteki yama paketi doğrulandı (${bundleZip.length() / 1024} KB) ✓")
+                    } else {
+                        LocalApkPatcher.downloadFile(info.patchBundleUrl, bundleZip, "cronus.best yama paketi") { msg, pct ->
+                            statusText = msg
+                            stepProgress = pct
+                            if (pct == null || pct >= 1f) pushLog(msg)
+                        }
                     }
 
                     currentStep = 3
@@ -246,12 +289,12 @@ fun SepwooManagerApp() {
                         require(actual.equals(info.patchBundleSha256, ignoreCase = true)) {
                             "Yama SHA-256 doğrulaması başarısız!"
                         }
-                        pushLog("SHA-256 doğrulandı ✓")
+                        pushLog("SHA-256 doğrulandı (${actual.take(12)}...) ✓")
                     }
 
                     currentStep = 4
                     val iconBytes = customIconUri?.let {
-                        pushLog("Özel ikon yuvarlatılıyor...")
+                        pushLog("Özel ikon 192x192 yuvarlatılıyor...")
                         LocalApkPatcher.renderRoundedIconPng(context, it)
                     }
                     LocalApkPatcher.patchAndSign(
@@ -267,7 +310,7 @@ fun SepwooManagerApp() {
                     ) { msg ->
                         statusText = msg
                         pushLog(msg)
-                        if (msg.contains("imzalanıyor")) currentStep = 5
+                        if (msg.contains("imzalanıyor", ignoreCase = true)) currentStep = 5
                     }
 
                     currentStep = 5
@@ -707,9 +750,12 @@ fun SepwooManagerApp() {
                         conflictHint = "Resmi SineWix hâlâ kurulu görünüyor, lütfen önce kaldırın."
                     } else {
                         showConflictDialog = false
-                        pendingConflictApk?.let {
+                        val readyApk = pendingConflictApk
+                        if (readyApk != null && readyApk.exists()) {
                             statusText = "Hazır! Android yükleyicisi açılıyor..."
-                            LocalApkPatcher.installApk(context, it)
+                            LocalApkPatcher.installApk(context, readyApk)
+                        } else {
+                            startPatchAndInstall()
                         }
                     }
                 }) {
@@ -802,15 +848,27 @@ private fun ProcessStatusDialog(
                     }
                 }
 
+                val logScrollState = rememberScrollState()
+                LaunchedEffect(logs.size) {
+                    logScrollState.animateScrollTo(logScrollState.maxValue)
+                }
                 Surface(
                     color = BgDark,
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, OutlineSubtle),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 210.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        logs.takeLast(5).forEach { log ->
-                            Text(log, fontSize = 11.sp, color = Color(0xFFA1A1AA))
+                    Column(
+                        modifier = Modifier.verticalScroll(logScrollState).padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        logs.forEach { log ->
+                            Text(
+                                text = "• $log",
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = if (log.endsWith("✓")) Color(0xFF86EFAC) else Color(0xFFB4B4BC)
+                            )
                         }
                     }
                 }
