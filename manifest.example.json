@@ -1,0 +1,18 @@
+{
+  "managerVersion": "1.0.0",
+  "appName": "Sinewix PLUS",
+  "targetPackage": "com.wxsmash.game",
+  "targetVersionName": "2.6.3",
+  "targetVersionCode": 263,
+  "officialApkUrl": "https://github.com/Sinewix/sinewixapk/releases/download/2.6.3/SineWix2.6.3.apk",
+  "patchVersion": "2.6.3-plus.1",
+  "patchBundleUrl": "https://cronus.best/sepwoo/bundles/2.6.3-plus.1.zip",
+  "patchBundleSha256": "REPLACE_WITH_BUNDLE_SHA256",
+  "changelog": [
+    "Uygulama adı Sinewix PLUS olarak güncellendi",
+    "VIP / Premium kilidi ve sınırsız indirme",
+    "Tüm reklam ağları ve izle-aç engelleri kaldırıldı",
+    "Harici Oynatıcı (VLC / MX) ve PiP desteği",
+    "APK boyutu ~106 MB -> ~77.7 MB seviyesine düşürüldü"
+  ]
+}

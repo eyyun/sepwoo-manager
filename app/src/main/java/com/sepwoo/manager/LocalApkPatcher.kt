@@ -1,0 +1,244 @@
+package com.sepwoo.manager
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
+import android.net.Uri
+import androidx.core.content.FileProvider
+import com.android.apksig.ApkSigner
+import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.PrivateKey
+import java.security.cert.X509Certificate
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+/**
+ * On-device non-root APK patcher for Sinewix PLUS.
+ * Fetches manifest & patch bundle from cronus.best, downloads official SineWix APK
+ * from the upstream release (or uses a user-selected APK), merges patches locally,
+ * signs with apksig, and launches Android's PackageInstaller.
+ */
+object LocalApkPatcher {
+
+    const val DEFAULT_MANIFEST_URL = "https://cronus.best/sepwoo/manifest.json"
+
+    data class ManifestInfo(
+        val appName: String,
+        val targetPackage: String,
+        val targetVersionName: String,
+        val officialApkUrl: String,
+        val patchVersion: String,
+        val patchBundleUrl: String,
+        val patchBundleSha256: String,
+        val changelog: List<String>
+    )
+
+    data class PatchConfig(
+        val customAppName: String = "Sinewix PLUS",
+        val customIconPngBytes: ByteArray? = null,
+        val slimUnusedAbis: Boolean = true
+    )
+
+    private val LAUNCHER_ICON_ENTRIES = setOf(
+        "res/N37.png", "res/9wU.png", "res/Eh5.png", "res/ynk.png", "res/FSV.png", "res/RJS.png", "res/o-_.png",
+        "res/twT.png", "res/zRY.png", "res/vhE.png", "res/8cS.png", "res/wbD.png", "res/fOp.png", "res/Gc2.png"
+    )
+
+    private val EXCLUDED_PREFIXES = listOf(
+        "META-INF/",
+        "lib/armeabi-v7a/",
+        "lib/x86/",
+        "lib/x86_64/",
+        "assets/audience_network/",
+        "assets/iads/",
+        "assets/ad-viewer/",
+        "com/ibm/icu/impl/data/icudata/brkitr/",
+        "com/ibm/icu/impl/data/icudata/translit/",
+        "com/ibm/icu/impl/data/icudata/rbnf/"
+    )
+
+    fun fetchManifest(url: String = DEFAULT_MANIFEST_URL): ManifestInfo {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 15_000
+        }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val json = JSONObject(body)
+        val notes = buildList {
+            val arr = json.optJSONArray("changelog")
+            if (arr != null) {
+                for (i in 0 until arr.length()) add(arr.getString(i))
+            }
+        }
+        return ManifestInfo(
+            appName = json.optString("appName", "Sinewix PLUS"),
+            targetPackage = json.optString("targetPackage", "com.wxsmash.game"),
+            targetVersionName = json.optString("targetVersionName", "2.6.3"),
+            officialApkUrl = json.optString(
+                "officialApkUrl",
+                "https://github.com/Sinewix/sinewixapk/releases/download/2.6.3/SineWix2.6.3.apk"
+            ),
+            patchVersion = json.optString("patchVersion", "2.6.3-plus.1"),
+            patchBundleUrl = json.getString("patchBundleUrl"),
+            patchBundleSha256 = json.optString("patchBundleSha256", ""),
+            changelog = notes
+        )
+    }
+
+    fun downloadFile(url: String, destFile: File, label: String, onProgress: (String) -> Unit) {
+        onProgress("$label indiriliyor...")
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = true
+            connectTimeout = 15_000
+            readTimeout = 60_000
+        }
+        conn.inputStream.use { input ->
+            FileOutputStream(destFile).use { output ->
+                input.copyTo(output)
+            }
+        }
+    }
+
+    fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { fis ->
+            val buf = ByteArray(8192)
+            var read = fis.read(buf)
+            while (read > 0) {
+                digest.update(buf, 0, read)
+                read = fis.read(buf)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun renderRoundedIconPng(context: Context, uri: Uri): ByteArray {
+        val raw = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            ?: error("Seçilen ikon okunamadı")
+        val size = 192
+        val minDim = minOf(raw.width, raw.height)
+        val x = (raw.width - minDim) / 2
+        val y = (raw.height - minDim) / 2
+        val square = Bitmap.createBitmap(raw, x, y, minDim, minDim)
+        val scaled = Bitmap.createScaledBitmap(square, size, size, true)
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), 44f, 44f, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(scaled, 0f, 0f, paint)
+        return ByteArrayOutputStream().apply {
+            out.compress(Bitmap.CompressFormat.PNG, 100, this)
+        }.toByteArray()
+    }
+
+    fun patchAndSign(
+        context: Context,
+        officialApk: File,
+        patchBundleZip: File,
+        outSignedApk: File,
+        config: PatchConfig,
+        onProgress: (String) -> Unit
+    ) {
+        val unsignedApk = File(context.cacheDir, "sinewix_plus_unsigned.apk")
+
+        onProgress("Yama paketi hazırlanıyor...")
+        val replacements = mutableMapOf<String, ByteArray>()
+        ZipInputStream(BufferedInputStream(FileInputStream(patchBundleZip))).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    replacements[entry.name] = zis.readBytes()
+                }
+                entry = zis.nextEntry
+            }
+        }
+
+        onProgress("Sinewix PLUS yerel olarak derleniyor...")
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk))).use { zos ->
+            zos.setLevel(Deflater.BEST_COMPRESSION)
+            ZipInputStream(BufferedInputStream(FileInputStream(officialApk))).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val name = entry.name
+                    val skipSignature = name.startsWith("META-INF/") &&
+                        (name.endsWith(".SF") || name.endsWith(".RSA") || name.endsWith(".DSA") || name.endsWith(".MF"))
+                    val skipSlim = config.slimUnusedAbis && EXCLUDED_PREFIXES.any { name.startsWith(it) }
+
+                    if (!skipSignature && !skipSlim) {
+                        val outEntry = ZipEntry(name)
+                        val replacement = replacements[name]
+                        val customIcon = if (config.customIconPngBytes != null && name in LAUNCHER_ICON_ENTRIES) {
+                            config.customIconPngBytes
+                        } else null
+
+                        when {
+                            replacement != null -> {
+                                zos.putNextEntry(outEntry)
+                                zos.write(replacement)
+                                zos.closeEntry()
+                            }
+                            customIcon != null -> {
+                                zos.putNextEntry(outEntry)
+                                zos.write(customIcon)
+                                zos.closeEntry()
+                            }
+                            else -> {
+                                zos.putNextEntry(outEntry)
+                                zis.copyTo(zos)
+                                zos.closeEntry()
+                            }
+                        }
+                    }
+                    entry = zis.nextEntry
+                }
+            }
+        }
+
+        onProgress("APK yerel olarak imzalanıyor...")
+        val ks = KeyStore.getInstance("PKCS12")
+        context.assets.open("sepwoo_signer.p12").use { ks.load(it, "sepwoo123".toCharArray()) }
+        val alias = ks.aliases().nextElement()
+        val key = ks.getKey(alias, "sepwoo123".toCharArray()) as PrivateKey
+        val cert = ks.getCertificate(alias) as X509Certificate
+
+        val signerConfig = ApkSigner.SignerConfig.Builder("sepwoo", key, listOf(cert)).build()
+        ApkSigner.Builder(listOf(signerConfig))
+            .setInputApk(unsignedApk)
+            .setOutputApk(outSignedApk)
+            .setV1SigningEnabled(true)
+            .setV2SigningEnabled(true)
+            .setV3SigningEnabled(true)
+            .build()
+            .sign()
+
+        unsignedApk.delete()
+    }
+
+    fun installApk(context: Context, apkFile: File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
+    }
+}
