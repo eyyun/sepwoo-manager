@@ -506,6 +506,7 @@ fun SepwooManagerApp() {
                     Spacer(Modifier.height(16.dp))
                     Surface(
                         color = AccentCrimson.copy(alpha = 0.14f),
+                        contentColor = Color.White,
                         shape = RoundedCornerShape(18.dp),
                         border = BorderStroke(1.dp, AccentCrimson.copy(alpha = 0.45f)),
                         modifier = Modifier.fillMaxWidth().clickable(enabled = !isWorking) { startSelfUpdate(upd) }
@@ -516,7 +517,7 @@ fun SepwooManagerApp() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Manager Güncellemesi (${upd.latestTag})", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Text("Manager Güncellemesi (${upd.latestTag})", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                 Text("GitHub üzerinden otomatik güncellemek için dokun", fontSize = 12.sp, color = MutedText)
                             }
                             Text("Güncelle", color = AccentCrimson, fontWeight = FontWeight.Bold, fontSize = 13.sp)
