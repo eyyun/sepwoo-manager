@@ -28,7 +28,9 @@ class UpdateCheckWorker(
 
             if (patchKey != lastNotified && patchKey != lastApplied) {
                 // Only notify if we had a prior baseline or if Sinewix PLUS is already installed
-                val installed = LocalApkPatcher.getInstalledVersion(applicationContext, manifest.targetPackage) != null
+                val installed = runCatching {
+                    applicationContext.packageManager.getPackageInfo(manifest.targetPackage, 0)
+                }.isSuccess
                 if (lastNotified != null || installed) {
                     NotificationHelper.showPatchUpdateNotification(applicationContext, manifest)
                 }
