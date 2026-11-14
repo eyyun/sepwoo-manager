@@ -339,6 +339,40 @@ object LocalApkPatcher {
         unsignedApk.delete()
     }
 
+    fun hasNonSepwooSignature(context: Context, packageName: String): Boolean = runCatching {
+        val pm = context.packageManager
+        val flags = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            @Suppress("DEPRECATION")
+            android.content.pm.PackageManager.GET_SIGNATURES
+        }
+        val pkgInfo = pm.getPackageInfo(packageName, flags)
+        val installedBytes = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            pkgInfo.signingInfo?.apkContentsSigners?.firstOrNull()?.toByteArray()
+        } else {
+            @Suppress("DEPRECATION")
+            pkgInfo.signatures?.firstOrNull()?.toByteArray()
+        } ?: return@runCatching false
+
+        val ks = KeyStore.getInstance("PKCS12")
+        context.assets.open("sepwoo_signer.p12").use { ks.load(it, "sepwoo123".toCharArray()) }
+        val alias = ks.aliases().nextElement()
+        val sepwooBytes = (ks.getCertificate(alias) as X509Certificate).encoded
+
+        val md = MessageDigest.getInstance("SHA-256")
+        val installedHash = md.digest(installedBytes)
+        val sepwooHash = md.digest(sepwooBytes)
+        !installedHash.contentEquals(sepwooHash)
+    }.getOrDefault(false)
+
+    fun uninstallPackage(context: Context, packageName: String) {
+        val intent = Intent(Intent.ACTION_DELETE, android.net.Uri.parse("package:$packageName")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+
     fun installApk(context: Context, apkFile: File) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
         val intent = Intent(Intent.ACTION_VIEW).apply {

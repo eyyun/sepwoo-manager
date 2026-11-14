@@ -109,6 +109,9 @@ fun SepwooManagerApp() {
     var currentStep by remember { mutableIntStateOf(0) }
     var stepProgress by remember { mutableStateOf<Float?>(null) }
     val processLogs = remember { mutableStateListOf<String>() }
+    var pendingConflictApk by remember { mutableStateOf<File?>(null) }
+    var showConflictDialog by remember { mutableStateOf(false) }
+    var conflictHint by remember { mutableStateOf("") }
 
     fun pushLog(line: String) {
         if (processLogs.lastOrNull() != line) {
@@ -268,8 +271,15 @@ fun SepwooManagerApp() {
                     stepProgress = 1f
                     pushLog("Tamamlandı! Android yükleyicisi açılıyor...")
                     withContext(Dispatchers.Main) {
-                        statusText = "Hazır! Android yükleyicisi açılıyor..."
-                        LocalApkPatcher.installApk(context, signedApk)
+                        if (LocalApkPatcher.hasNonSepwooSignature(context, info.targetPackage)) {
+                            pendingConflictApk = signedApk
+                            conflictHint = ""
+                            showConflictDialog = true
+                            statusText = "Resmi SineWix tespit edildi, kaldırılması bekleniyor..."
+                        } else {
+                            statusText = "Hazır! Android yükleyicisi açılıyor..."
+                            LocalApkPatcher.installApk(context, signedApk)
+                        }
                     }
                 }
             }.onFailure { err ->
@@ -578,6 +588,52 @@ fun SepwooManagerApp() {
             statusText = statusText,
             logs = processLogs,
             onDismiss = { if (!isWorking) showProcessDialog = false }
+        )
+    }
+
+    if (showConflictDialog) {
+        val targetPkg = manifest?.targetPackage ?: "com.wxsmash.game"
+        AlertDialog(
+            onDismissRequest = { showConflictDialog = false },
+            containerColor = SurfaceL1,
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            title = { Text("Resmi SineWix Kurulu", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Cihazınızda farklı imzalı resmi SineWix bulunduğu için Sinewix PLUS doğrudan üzerine kurulamaz. Önce resmi sürümü kaldırın, ardından 'Kaldırdım, Kur' butonuna basın.",
+                        fontSize = 13.sp,
+                        color = MutedText
+                    )
+                    if (conflictHint.isNotBlank()) {
+                        Text(conflictHint, fontSize = 12.sp, color = AccentCrimson)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { LocalApkPatcher.uninstallPackage(context, targetPkg) },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentCrimson, contentColor = Color.White)
+                ) {
+                    Text("Resmi SineWix'i Kaldır")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    if (LocalApkPatcher.hasNonSepwooSignature(context, targetPkg)) {
+                        conflictHint = "Resmi SineWix hâlâ kurulu görünüyor, lütfen önce kaldırın."
+                    } else {
+                        showConflictDialog = false
+                        pendingConflictApk?.let {
+                            statusText = "Hazır! Android yükleyicisi açılıyor..."
+                            LocalApkPatcher.installApk(context, it)
+                        }
+                    }
+                }) {
+                    Text("Kaldırdım, Kur", color = Color.White)
+                }
+            }
         )
     }
 }
