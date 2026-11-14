@@ -71,9 +71,6 @@ object LocalApkPatcher {
 
     private val EXCLUDED_PREFIXES = listOf(
         "META-INF/",
-        "lib/armeabi-v7a/",
-        "lib/x86/",
-        "lib/x86_64/",
         "assets/audience_network/",
         "assets/iads/",
         "assets/ad-viewer/",
@@ -81,6 +78,46 @@ object LocalApkPatcher {
         "com/ibm/icu/impl/data/icudata/translit/",
         "com/ibm/icu/impl/data/icudata/rbnf/"
     )
+
+    private class CountingOutputStream(private val out: java.io.OutputStream) : java.io.OutputStream() {
+        var bytesWritten: Long = 0L
+            private set
+
+        override fun write(b: Int) {
+            out.write(b)
+            bytesWritten++
+        }
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            out.write(b, off, len)
+            bytesWritten += len
+        }
+
+        override fun flush() = out.flush()
+        override fun close() = out.close()
+    }
+
+    private fun writeStoredAligned(
+        zos: ZipOutputStream,
+        cos: CountingOutputStream,
+        name: String,
+        bytes: ByteArray,
+        alignment: Int
+    ) {
+        val nameLen = name.toByteArray(Charsets.UTF_8).size
+        val baseOffset = cos.bytesWritten + 30L + nameLen
+        val pad = ((alignment - (baseOffset % alignment)) % alignment).toInt()
+        val outEntry = ZipEntry(name).apply {
+            method = ZipEntry.STORED
+            size = bytes.size.toLong()
+            compressedSize = bytes.size.toLong()
+            crc = java.util.zip.CRC32().apply { update(bytes) }.value
+            if (pad > 0) extra = ByteArray(pad)
+        }
+        zos.putNextEntry(outEntry)
+        zos.write(bytes)
+        zos.closeEntry()
+    }
 
     fun checkManagerUpdate(context: Context): ManagerUpdateInfo? = runCatching {
         val currentVer = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
@@ -236,7 +273,8 @@ object LocalApkPatcher {
         }
 
         onProgress("Sinewix PLUS yerel olarak derleniyor...")
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk))).use { zos ->
+        val cos = CountingOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk)))
+        ZipOutputStream(cos).use { zos ->
             zos.setLevel(Deflater.BEST_COMPRESSION)
             ZipInputStream(BufferedInputStream(FileInputStream(officialApk))).use { zis ->
                 var entry = zis.nextEntry
@@ -244,37 +282,33 @@ object LocalApkPatcher {
                     val name = entry.name
                     val skipSignature = name.startsWith("META-INF/") &&
                         (name.endsWith(".SF") || name.endsWith(".RSA") || name.endsWith(".DSA") || name.endsWith(".MF"))
-                    val skipSlim = config.slimUnusedAbis && EXCLUDED_PREFIXES.any { name.startsWith(it) }
+                    val skipAbi = config.slimUnusedAbis && name.startsWith("lib/") && run {
+                        val abi = name.removePrefix("lib/").substringBefore("/")
+                        abi.isNotEmpty() && abi !in android.os.Build.SUPPORTED_ABIS
+                    }
+                    val skipSlim = config.slimUnusedAbis && (skipAbi || EXCLUDED_PREFIXES.any { name.startsWith(it) })
 
                     if (!skipSignature && !skipSlim) {
-                        val outEntry = ZipEntry(name)
                         val replacement = replacements[name]
                         val customIcon = if (config.customIconPngBytes != null && name in LAUNCHER_ICON_ENTRIES) {
                             config.customIconPngBytes
                         } else null
 
                         val payload = replacement ?: customIcon
-                        if (payload != null) {
-                            if (name == "resources.arsc") {
-                                outEntry.method = ZipEntry.STORED
-                                outEntry.size = payload.size.toLong()
-                                outEntry.compressedSize = payload.size.toLong()
-                                outEntry.crc = java.util.zip.CRC32().apply { update(payload) }.value
-                            }
-                            zos.putNextEntry(outEntry)
+                        val storedAlignment = when {
+                            name == "resources.arsc" -> 4
+                            name.endsWith(".so") -> 4096
+                            else -> 0
+                        }
+                        if (storedAlignment > 0) {
+                            val rawBytes = payload ?: zis.readBytes()
+                            writeStoredAligned(zos, cos, name, rawBytes, storedAlignment)
+                        } else if (payload != null) {
+                            zos.putNextEntry(ZipEntry(name))
                             zos.write(payload)
                             zos.closeEntry()
-                        } else if (name == "resources.arsc") {
-                            val rawBytes = zis.readBytes()
-                            outEntry.method = ZipEntry.STORED
-                            outEntry.size = rawBytes.size.toLong()
-                            outEntry.compressedSize = rawBytes.size.toLong()
-                            outEntry.crc = java.util.zip.CRC32().apply { update(rawBytes) }.value
-                            zos.putNextEntry(outEntry)
-                            zos.write(rawBytes)
-                            zos.closeEntry()
                         } else {
-                            zos.putNextEntry(outEntry)
+                            zos.putNextEntry(ZipEntry(name))
                             zis.copyTo(zos)
                             zos.closeEntry()
                         }
