@@ -34,8 +34,11 @@ Yama paketleri ve sürüm bilgileri **`cronus.best`** üzerinden dinamik olarak 
 
 ## ⬇️ İndirme ve Kullanım
 
-1. [Releases](https://github.com/eyyun/sepwoo-manager/releases) sayfasından güncel **Sepwoo Manager** APK dosyasını indirin.
-2. Uygulamayı açıp resmi SineWix APK dosyasını seçin ve **Yamala & Kur** butonuna dokunun.
+- **Son Sürümü Doğrudan İndir:** [**Sepwoo-Manager.apk (Son Sürüm)**](https://github.com/eyyun/sepwoo-manager/releases/latest/download/Sepwoo-Manager.apk)
+- Tüm sürümler: [GitHub Releases](https://github.com/eyyun/sepwoo-manager/releases/latest)
+
+1. Yukarıdaki bağlantıdan güncel **Sepwoo Manager** APK dosyasını indirin ve kurun.
+2. Uygulamayı açıp **İndir & Yamala** (veya yerel APK için **Resmi APK Seç → Yamala & Kur**) butonuna dokunun.
 3. Kurulum tamamlandıktan sonra **Sinewix PLUS → Ayarlar → Sepwoo Mod Settings** üzerinden tüm mod özelliklerini yönetebilirsiniz.
 
 ---
