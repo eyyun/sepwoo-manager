@@ -293,9 +293,12 @@ fun SepwooManagerApp() {
                     }
 
                     currentStep = 4
-                    val iconBytes = customIconUri?.let {
+                    val iconBytes = if (customIconUri != null) {
                         pushLog("Özel ikon 192x192 yuvarlatılıyor...")
-                        LocalApkPatcher.renderRoundedIconPng(context, it)
+                        LocalApkPatcher.renderRoundedIconPng(context, customIconUri)
+                    } else {
+                        pushLog("Varsayılan Sinewix PLUS ikonu hazırlanıyor...")
+                        LocalApkPatcher.renderDefaultIconPng(context)
                     }
                     LocalApkPatcher.patchAndSign(
                         context = context,

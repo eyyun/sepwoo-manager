@@ -238,9 +238,7 @@ object LocalApkPatcher {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    fun renderRoundedIconPng(context: Context, uri: Uri): ByteArray {
-        val raw = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-            ?: error("Seçilen ikon okunamadı")
+    private fun encodeRoundedBitmap(raw: Bitmap): ByteArray {
         val size = 192
         val minDim = minOf(raw.width, raw.height)
         val x = (raw.width - minDim) / 2
@@ -256,6 +254,18 @@ object LocalApkPatcher {
         return ByteArrayOutputStream().apply {
             out.compress(Bitmap.CompressFormat.PNG, 100, this)
         }.toByteArray()
+    }
+
+    fun renderRoundedIconPng(context: Context, uri: Uri): ByteArray {
+        val raw = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            ?: error("Seçilen ikon okunamadı")
+        return encodeRoundedBitmap(raw)
+    }
+
+    fun renderDefaultIconPng(context: Context): ByteArray {
+        val raw = BitmapFactory.decodeResource(context.resources, R.drawable.sinewix_plus_logo)
+            ?: error("Varsayılan Sinewix PLUS ikonu okunamadı")
+        return encodeRoundedBitmap(raw)
     }
 
     fun patchAndSign(
