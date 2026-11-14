@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -298,6 +299,10 @@ fun SepwooManagerApp() {
             customIconUri = uri
             statusText = "Özel uygulama ikonu seçildi."
         }
+    }
+
+    BackHandler(enabled = showSettings) {
+        showSettings = false
     }
 
     Column(
